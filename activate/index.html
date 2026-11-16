@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Activate with a file - Sign Design and Cut</title>
+<meta name="robots" content="noindex">
+<!--
+  Sign Design and Cut - activating a PC that has no internet (docs/OFFLINE-ACTIVATION-DESIGN.md in the code).
+  The program saves a request file; here it is turned into a license file (license.sdclic) by the edge function
+  sdc-offline-activate. A release file from the program frees that PC's install.
+  This page holds only the function's address and the PUBLISHABLE key, which is meant to be public. Never put a
+  secret key here.
+-->
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #5d6573; --line: #d5d9e0;
+    --accent: #1f5fbf; --accent-text: #ffffff; --ok-bg: #e8f5ea; --ok: #1d6b2c; --bad-bg: #fdecec; --bad: #a32020;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15181d; --card: #1f242b; --text: #e6e9ee; --muted: #a1a9b5; --line: #39404a;
+      --accent: #5b9bff; --accent-text: #0d1117; --ok-bg: #173322; --ok: #8fd8a0; --bad-bg: #3a1c1c; --bad: #ff9c9c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 28px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  p { margin: 0 0 14px; }
+  .muted { color: var(--muted); font-size: 14px; }
+  #drop { border: 2px dashed var(--line); border-radius: 10px; padding: 28px 16px; text-align: center; margin: 18px 0; cursor: pointer; }
+  #drop.over { border-color: var(--accent); }
+  #drop strong { display: block; font-size: 17px; margin-bottom: 4px; }
+  #fileName { margin-top: 10px; font-weight: 600; word-break: break-all; }
+  button { font: inherit; border-radius: 8px; padding: 10px 20px; cursor: pointer; border: 1px solid var(--accent); }
+  #go { background: var(--accent); color: var(--accent-text); font-weight: 600; width: 100%; }
+  #go:disabled { opacity: .45; cursor: default; }
+  .choose { background: transparent; color: var(--accent); margin-top: 10px; }
+  #result { display: none; margin-top: 18px; padding: 14px 16px; border-radius: 8px; }
+  #result.ok { display: block; background: var(--ok-bg); color: var(--ok); }
+  #result.bad { display: block; background: var(--bad-bg); color: var(--bad); }
+  #result a { color: inherit; font-weight: 600; }
+  ol { padding-left: 22px; margin: 0 0 14px; }
+  li { margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <h1>Activate with a file</h1>
+    <p>For Sign Design and Cut on a PC with no internet.</p>
+    <ol>
+      <li>On that PC, the program saved a <b>request file</b> (activation-request.sdcreq).</li>
+      <li>Put it in the box below and click <b>Get my license file</b>.</li>
+      <li>Take the license file (license.sdclic) back to that PC and load it in the program.</li>
+    </ol>
+    <p class="muted">Freeing a PC you no longer use? Put its <b>release file</b> (activation-release.sdcrel) in the box instead.</p>
+
+    <div id="drop" tabindex="0" role="button" aria-label="Choose file">
+      <strong>Drop the file here</strong>
+      <span class="muted">or</span><br>
+      <button type="button" class="choose" id="choose">Choose file...</button>
+      <div id="fileName"></div>
+    </div>
+    <input type="file" id="file" accept=".sdcreq,.sdcrel,.txt" hidden>
+    <button type="button" id="go" disabled>Get my license file</button>
+    <div id="result" role="status"></div>
+  </div>
+  <p class="muted" style="margin-top:14px">Need help? Contact Sign Design and Cut.</p>
+</main>
+
+<script>
+  // The edge function and the project's PUBLISHABLE key (public by design; never a secret key here).
+  var FUNCTION_URL = "https://dpqjcqdjounlocyptqht.supabase.co/functions/v1/sdc-offline-activate";
+  var PUBLISHABLE_KEY = "sb_publishable_YYXUO6A3nue2sZSuePGHbg_PeLb9g0R";
+
+  var fileText = null, fileKind = null;
+  var drop = document.getElementById("drop"), input = document.getElementById("file");
+  var go = document.getElementById("go"), result = document.getElementById("result");
+
+  function show(kind, html) { result.className = kind; result.innerHTML = html; }
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); }
+
+  // What kind of file it is (request or release), read from its last line, so the button says what it will do.
+  function kindOf(text) {
+    var lines = text.replace(/\r/g, "").split("\n").map(function (l) { return l.trim(); });
+    var at = lines.indexOf("-----");
+    if (at < 0) return null;
+    var data = lines.slice(at + 1).filter(function (l) { return l.length > 0; });
+    if (!data.length) return null;
+    try {
+      var bin = atob(data[data.length - 1]), bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      var d = JSON.parse(new TextDecoder("utf-8").decode(bytes));
+      return d && (d.kind === "request" || d.kind === "release") ? d.kind : null;
+    } catch (e) { return null; }
+  }
+
+  function take(f) {
+    result.className = ""; result.innerHTML = "";
+    if (!f) return;
+    document.getElementById("fileName").textContent = f.name;
+    if (f.size > 64 * 1024) { fileText = null; go.disabled = true; show("bad", "This file is too big to be a file from Sign Design and Cut."); return; }
+    var r = new FileReader();
+    r.onload = function () {
+      fileText = String(r.result);
+      fileKind = kindOf(fileText);
+      if (!fileKind) {
+        go.disabled = true;
+        show("bad", "This is not a request file or a release file from Sign Design and Cut. Pick the file the program saved " +
+                    "(activation-request.sdcreq or activation-release.sdcrel).");
+        return;
+      }
+      go.textContent = fileKind === "release" ? "Free this install" : "Get my license file";
+      go.disabled = false;
+    };
+    r.onerror = function () { show("bad", "The file could not be read."); };
+    r.readAsText(f);
+  }
+
+  function download(name, text) {
+    var url = URL.createObjectURL(new Blob([text], { type: "application/octet-stream" }));
+    var a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
+  }
+
+  go.addEventListener("click", function () {
+    if (!fileText) return;
+    go.disabled = true;
+    show("ok", fileKind === "release" ? "Freeing the install..." : "Making your license file...");
+    var headers = { "Content-Type": "text/plain", "apikey": PUBLISHABLE_KEY };
+    if (PUBLISHABLE_KEY.indexOf("eyJ") === 0) headers.Authorization = "Bearer " + PUBLISHABLE_KEY;
+    fetch(FUNCTION_URL, { method: "POST", headers: headers, body: fileText })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, message: "The server gave an answer this page doesn't understand (" + r.status + ")." }; }); })
+      .then(function (d) {
+        if (!d.ok) { show("bad", esc(d.message || "That did not work.") + "<br><br>If you need help, contact Sign Design and Cut."); return; }
+        if (d.kind === "release") {
+          show("ok", d.already
+            ? "This install is already free" + (d.machine_name ? " (" + esc(d.machine_name) + ")" : "") + ". Nothing more to do."
+            : "Seat freed: the install on <b>" + esc(d.machine_name || "that PC") + "</b> is free for another PC." +
+              (d.seats != null ? " Installs in use: " + esc(d.seats_used) + " of " + esc(d.seats) + "." : ""));
+          return;
+        }
+        download(d.file_name || "license.sdclic", d.file);
+        show("ok", "Your license file <b>" + esc(d.file_name || "license.sdclic") + "</b> is downloaded" +
+                   (d.machine_name ? " (for " + esc(d.machine_name) + ")" : "") + ".<br><br>" +
+                   "Take it back to that PC. In the program's Activation window click <b>No internet on this PC? Activate with a file...</b>, " +
+                   "then <b>Load license file...</b>.<br><br>" +
+                   "Nothing downloaded? <a href=\"#\" id=\"again\">Download it again</a>.");
+        document.getElementById("again").addEventListener("click", function (e) { e.preventDefault(); download(d.file_name || "license.sdclic", d.file); });
+      })
+      .catch(function () {
+        show("bad", "The activation server could not be reached. Check this PC's internet connection and try again.");
+      })
+      .then(function () { go.disabled = !fileText; });
+  });
+
+  document.getElementById("choose").addEventListener("click", function (e) { e.stopPropagation(); input.click(); });
+  drop.addEventListener("click", function () { input.click(); });
+  drop.addEventListener("keydown", function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); input.click(); } });
+  input.addEventListener("change", function () { take(input.files[0]); input.value = ""; });
+  ["dragenter", "dragover"].forEach(function (n) { drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.add("over"); }); });
+  ["dragleave", "drop"].forEach(function (n) { drop.addEventListener(n, function (e) { e.preventDefault(); drop.classList.remove("over"); }); });
+  drop.addEventListener("drop", function (e) { if (e.dataTransfer.files.length) take(e.dataTransfer.files[0]); });
+</script>
+</body>
+</html>
